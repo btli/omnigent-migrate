@@ -1,0 +1,14 @@
+model = "gpt-5.5"
+model_context_window = 1000000
+model_reasoning_effort = "xhigh"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+approvals_reviewer = "user"
+
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+env = { GITHUB_TOKEN = "x" }
+
+[apps.connector_abc.tools.create_issue]
+approval_mode = "approve"
