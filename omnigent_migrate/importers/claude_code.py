@@ -67,7 +67,14 @@ class ClaudeCodeImporter:
                 continue
             servers = data.get("mcpServers") or data.get("mcp_servers") or {}
             for sname, cfg in servers.items():
-                mcp_tools[_sanitize(sname)] = mcp_tool_entry(cfg)
+                entry = mcp_tool_entry(cfg)
+                if entry is None:
+                    ledger.record(
+                        "mcp_server", f"{mcp_file}:{sname}", Status.UNSUPPORTED,
+                        "no command/url transport — not representable as an Omnigent MCP tool",
+                    )
+                    continue
+                mcp_tools[_sanitize(sname)] = entry
                 ledger.record("mcp_server", f"{mcp_file}:{sname}", Status.TRANSLATED)
 
         skills_dir = project / ".claude" / "skills"

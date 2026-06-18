@@ -8,6 +8,7 @@ import click
 
 from omnigent_migrate.importers.claude_code import ClaudeCodeImporter
 from omnigent_migrate.importers.codex import CodexImporter
+from omnigent_migrate.ir import Bundle
 from omnigent_migrate.ledger import Ledger, Status
 
 
@@ -16,11 +17,9 @@ def main() -> None:
     """Migrate an agent setup from another framework to Omnigent."""
 
 
-def _emit(project: Path, bundle: object, ledger: Ledger, out: Path | None, dry_run: bool) -> None:
+def _emit(project: Path, bundle: Bundle, ledger: Ledger, out: Path | None, dry_run: bool) -> None:
     from omnigent_migrate.exporter import export
-    from omnigent_migrate.ir import Bundle
 
-    assert isinstance(bundle, Bundle)
     report_md = ledger.render_markdown()
     if dry_run:
         # A dry run previews only — render the report to stdout, never mutate the source.
@@ -70,7 +69,10 @@ def from_codex(project: Path, out: Path | None, config_path: Path | None, dry_ru
 @click.option("-o", "--out", type=click.Path(file_okay=False, path_type=Path), default=None)
 @click.option("--dry-run", is_flag=True)
 def auto(project: Path, out: Path | None, dry_run: bool) -> None:
-    """Detect the source framework and import (claude if .claude/ present, else codex)."""
+    """Detect the source framework and import (claude if .claude/ present, else codex).
+
+    Uses ~/.codex/config.toml for the codex branch; use `from-codex --config` for a custom path.
+    """
     ledger = Ledger()
     if (project / ".claude").is_dir() or (project / "CLAUDE.md").is_file():
         click.echo("detected: claude")

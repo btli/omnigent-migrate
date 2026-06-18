@@ -33,12 +33,17 @@ def _os_env() -> dict[str, Any]:
     return {"type": "caller_process", "cwd": ".", "sandbox": {"type": "none"}}
 
 
-def mcp_tool_entry(cfg: dict[str, Any]) -> dict[str, Any]:
+def mcp_tool_entry(cfg: dict[str, Any]) -> dict[str, Any] | None:
     """Build an Omnigent `tools.<name>` MCP entry from a source MCP server config.
 
     Handles both Claude JSON `mcpServers` and Codex `[mcp_servers.*]` — they share the
     command/args/env (stdio) and url/headers (http) shape.
+
+    Returns None when neither ``command`` nor ``url`` is present — no representable
+    transport, so no valid Omnigent MCP tool can be constructed.
     """
+    if "command" not in cfg and "url" not in cfg:
+        return None
     entry: dict[str, Any] = {"type": "mcp"}
     if "command" in cfg:
         entry["command"] = cfg["command"]
@@ -46,7 +51,7 @@ def mcp_tool_entry(cfg: dict[str, Any]) -> dict[str, Any]:
             entry["args"] = cfg["args"]
         if cfg.get("env"):
             entry["env"] = cfg["env"]
-    elif "url" in cfg:
+    else:
         entry["url"] = cfg["url"]
         if cfg.get("headers"):
             entry["headers"] = cfg["headers"]

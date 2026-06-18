@@ -19,6 +19,15 @@ from omnigent_migrate.ledger import Ledger, Status
 _DEFAULT_CONFIG = Path("~/.codex/config.toml")
 _GOV_KEYS = ("approval_policy", "sandbox_mode", "approvals_reviewer")
 
+# All top-level config.toml keys that the importer explicitly maps or discloses.
+# Any key not in this set is unknown and gets a catch-all UNSUPPORTED ledger entry.
+_DISCLOSED_KEYS = frozenset({
+    "model", "model_context_window", "mcp_servers",
+    "approval_policy", "sandbox_mode", "approvals_reviewer",
+    "apps", "profiles", "projects", "tui",
+    "model_reasoning_effort", "model_auto_compact_token_limit",
+})
+
 
 def _read_toml(path: Path, ledger: Ledger) -> dict[str, Any]:
     if not path.is_file():
@@ -84,7 +93,14 @@ class CodexImporter:
         if isinstance(servers, dict):
             for sname, scfg in servers.items():
                 if isinstance(scfg, dict):
-                    tools[_sanitize(str(sname))] = mcp_tool_entry(scfg)
+                    entry = mcp_tool_entry(scfg)
+                    if entry is None:
+                        ledger.record(
+                            "mcp_server", f"{ref}:mcp_servers.{sname}", Status.UNSUPPORTED,
+                            "no command/url transport — not representable as an Omnigent MCP tool",
+                        )
+                        continue
+                    tools[_sanitize(str(sname))] = entry
                     ledger.record("mcp_server", f"{ref}:mcp_servers.{sname}", Status.TRANSLATED)
 
         extensions: dict[str, Any] = {}
@@ -118,6 +134,13 @@ class CodexImporter:
         if tools:
             config["tools"] = tools
 
+        residue = sorted(k for k in toml if k not in _DISCLOSED_KEYS)
+        if residue:
+            ledger.record(
+                "codex_config", f"{ref} (unmapped keys)", Status.UNSUPPORTED,
+                "config keys not migrated: " + ", ".join(residue),
+                "review these Codex settings; re-apply by hand if needed",
+            )
         ledger.note(
             "Scanned: AGENTS.md/CLAUDE.md, model, context_window, MCP servers, "
             "approval/sandbox. Codex profiles, per-project trust, TUI, model-tuning "
