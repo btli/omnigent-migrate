@@ -4,7 +4,7 @@
 
 **Goal:** Extend the Claude Code importer to cover the four primitives Plan 1 deferred — **permissions, hooks, slash-commands, plugins** — each mapped honestly (TRANSLATED / DEGRADED / UNSUPPORTED), with a `MigrationExtensions` sidecar so nothing carried is ever silently dropped, plus a golden-report test.
 
-**Architecture:** Same lenient-in / strict-out loop as Plan 1. New: (1) `Bundle` gains an `extensions` dict (carried-but-unmapped source primitives); the exporter writes them to a companion `MIGRATION_EXTENSIONS.yaml` that Omnigent ignores at load. (2) A new `importers/claude_extras.py` parses `settings.json` + `.claude/commands/` + `.claude-plugin/` and records fidelity. (3) Permissions map to an *approximate* `blast_radius` guardrail in `config.yaml` (the only one that references a real Omnigent handler); the precise allow/deny rules ride in the sidecar as a DEGRADED manual step.
+**Architecture:** Same lenient-in / strict-out loop as Plan 1. New: (1) `Bundle` gains an `extensions` dict (carried-but-unmapped source primitives); the exporter writes them to a companion `MIGRATION_EXTENSIONS.yaml` that Omnigent ignores at load. (2) A new `importers/claude_extras.py` parses `settings.json` + `.claude/commands/` + `.claude-plugin/` and records fidelity. (3) Permissions are **carried verbatim** in the sidecar and flagged DEGRADED — Omnigent agents run **sandboxed by design**, so the sandbox (not per-tool allow/deny lists) is the security boundary; an opt-in `blast_radius` guardrail is offered as a manual step rather than bolted onto every migrated agent. This keeps the accelerator's emitted config free of any Omnigent-internal module references.
 
 **Tech Stack:** Python 3.13, `uv`, `click`, `ruamel.yaml`, `pytest`, `ruff`, `mypy`; `omnigent` (editable) for validation only. Build on the `feat/mvp` branch (Plan 1 is committed there).
 
@@ -16,10 +16,11 @@
 - NEVER disable a linter/type check (`# noqa`, `# type: ignore`, etc.). Fix the root cause.
 - Strict TDD: failing test first → watch it fail → implement → watch it pass → commit.
 - `mypy --strict` clean: annotate everything; use `dict[str, Any]` for the loosely-typed bundle/settings JSON.
-- The IR is the **public bundle-config dict** (NOT omnigent's internal `AgentSpec`). Express guardrails/extensions in bundle-config terms only.
+- The IR is the **public bundle-config dict** (NOT omnigent's internal `AgentSpec`). Express extensions in bundle-config terms only; emit no Omnigent-internal handler paths in `config.yaml`.
 
 **Verified facts (spike-confirmed against the real `omnigent.spec.load`; don't re-derive):**
-- A `guardrails:` block referencing the real `blast_radius` builtin **validates** under `load(path, expand_env=False, enforce_handler_allowlist=False)`. The **minimal** valid form (proven) is:
+- Extra files in the bundle dir (`MIGRATION_REPORT.md`, and now `MIGRATION_EXTENSIONS.yaml`) are **ignored** by the loader — proven by Plan 1's passing integration test, which validates a dir already containing `MIGRATION_REPORT.md`. So the sidecar never affects validation.
+- Omnigent policies must reference a **real handler path**; `omnigent/spec/validator.py` rejects/no-ops fabricated handlers. So arbitrary Claude allow/deny lists CANNOT be auto-enforced. Because Omnigent agents run **sandboxed by design**, this plan does NOT emit an approximate guardrail — permissions are carried + flagged DEGRADED. For anyone who wants the extra net, the known-valid opt-in block (spike-confirmed to load) is:
   ```yaml
   guardrails:
     policies:
@@ -28,8 +29,7 @@
         function:
           path: omnigent.inner.nessie.policies.blast_radius
   ```
-- Omnigent policies must reference a **real handler path**; `omnigent/spec/validator.py` rejects/no-ops fabricated handlers. So arbitrary Claude allow/deny lists CANNOT be auto-enforced — `blast_radius` is an honest *approximation* (a catastrophic-command DENY set), and the precise rules are carried + flagged DEGRADED.
-- Extra files in the bundle dir (`MIGRATION_REPORT.md`, and now `MIGRATION_EXTENSIONS.yaml`) are **ignored** by the loader — proven by Plan 1's passing integration test, which validates a dir already containing `MIGRATION_REPORT.md`.
+  The manual step points users at this; the importer never writes it.
 - Real Claude shapes (from live projects):
   - `settings.json` → `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "...", "timeout": 10}]}], "PostToolUse": [...]}, "enabledPlugins": {...}, "permissions": {"allow": [...], "deny": [...], "defaultMode": "..."}}`.
   - `.claude/commands/<name>.md` → frontmatter (`description`, `allowed-tools`, `argument-description`, `user-invocable`) + a prose markdown body.
@@ -170,56 +170,40 @@ Leave the rest of `claude_code.py` unchanged (it already calls `_sanitize`/`_fro
 
 ---
 
-### Task 3: `claude_extras.py` — permissions → approximate guardrail (DEGRADED)
+### Task 3: `claude_extras.py` — permissions carried (DEGRADED; sandbox is the boundary)
 
 **Files:**
 - Create: `omnigent_migrate/importers/claude_extras.py`
 - Test: `tests/test_claude_extras.py`
 
+**Design note:** Omnigent agents run sandboxed by design, so the sandbox — not per-tool permission lists — is the security boundary. No Omnigent handler enforces arbitrary allow/deny lists anyway. So permissions are recorded DEGRADED and carried verbatim in the sidecar, with a manual step describing the opt-in `blast_radius` guardrail for anyone who wants an extra catastrophic-command net. The importer writes **no** guardrail into `config.yaml`.
+
 **Interfaces:**
 - Produces:
   - `read_settings(project: Path) -> dict[str, Any]` — shallow-merge `.claude/settings.json` then `.claude/settings.local.json` (later wins); `{}` if absent/invalid.
-  - `collect_permissions(settings: dict[str, Any], ledger: Ledger) -> tuple[dict[str, Any] | None, Any]` — returns `(guardrails_block | None, raw_permissions | None)`; records a DEGRADED `permissions` entry when present.
+  - `collect_permissions(settings: dict[str, Any], ledger: Ledger) -> Any` — returns the raw permissions dict (or `None`); records a DEGRADED `permissions` entry when present. Does NOT mutate config.
 
 - [ ] **Step 1: Failing test** (`tests/test_claude_extras.py`):
 ```python
 from pathlib import Path
 
-from omnigent_migrate.exporter import export
 from omnigent_migrate.importers.claude_extras import collect_permissions, read_settings
-from omnigent_migrate.ir import Bundle
 from omnigent_migrate.ledger import Ledger, Status
 
 
-def test_collect_permissions_emits_blast_radius() -> None:
+def test_collect_permissions_carries_and_degrades() -> None:
     led = Ledger()
     settings = {"permissions": {"allow": ["Read"], "deny": ["Bash(rm:*)"], "defaultMode": "acceptEdits"}}
-    guardrails, perms = collect_permissions(settings, led)
-    assert guardrails is not None
-    path = guardrails["policies"]["blast_radius"]["function"]["path"]
-    assert path == "omnigent.inner.nessie.policies.blast_radius"
+    perms = collect_permissions(settings, led)
     assert perms == settings["permissions"]
-    assert any(e.primitive == "permissions" and e.status is Status.DEGRADED for e in led.entries)
+    e = next(e for e in led.entries if e.primitive == "permissions")
+    assert e.status is Status.DEGRADED and e.manual_step
 
 
 def test_collect_permissions_absent_is_noop() -> None:
     led = Ledger()
-    guardrails, perms = collect_permissions({}, led)
-    assert guardrails is None and perms is None
+    assert collect_permissions({}, led) is None
     assert led.entries == []
-
-
-def test_emitted_guardrail_actually_validates(tmp_path: Path) -> None:
-    led = Ledger()
-    guardrails, _ = collect_permissions({"permissions": {"deny": ["Bash(rm:*)"]}}, led)
-    bundle = Bundle(config={
-        "spec_version": 1, "name": "demo", "description": "d",
-        "executor": {"type": "omnigent", "config": {"harness": "claude-sdk"}},
-        "prompt": "You are a coding agent.\n",
-        "os_env": {"type": "caller_process", "cwd": ".", "sandbox": {"type": "none"}},
-        "guardrails": guardrails,
-    })
-    export(bundle, tmp_path / "b")  # raises ExportInvalid if the real loader rejects the guardrail
 
 
 def test_read_settings_merges_local(tmp_path: Path) -> None:
@@ -236,8 +220,8 @@ def test_read_settings_merges_local(tmp_path: Path) -> None:
 ```python
 """Claude Code primitives with no direct AgentSpec field: permissions, hooks,
 slash-commands, plugins. Each is recorded in the ledger; carried values become
-the bundle's MigrationExtensions sidecar. Permissions additionally yield an
-approximate `blast_radius` guardrail (the only one backed by a real handler)."""
+the bundle's MigrationExtensions sidecar. Omnigent agents run sandboxed, so
+permissions are carried + flagged (DEGRADED), not bolted on as a guardrail."""
 
 from __future__ import annotations
 
@@ -246,10 +230,6 @@ from pathlib import Path
 from typing import Any
 
 from omnigent_migrate.ledger import Ledger, Status
-
-# The single Omnigent builtin guardrail we can safely emit: it references a real
-# handler (omnigent.inner.nessie.policies.blast_radius) and validates at load.
-_BLAST_RADIUS_PATH = "omnigent.inner.nessie.policies.blast_radius"
 
 
 def read_settings(project: Path) -> dict[str, Any]:
@@ -268,39 +248,29 @@ def read_settings(project: Path) -> dict[str, Any]:
     return merged
 
 
-def collect_permissions(
-    settings: dict[str, Any], ledger: Ledger
-) -> tuple[dict[str, Any] | None, Any]:
-    """Map Claude `permissions` to an approximate blast_radius guardrail.
+def collect_permissions(settings: dict[str, Any], ledger: Ledger) -> Any:
+    """Carry Claude `permissions` verbatim; the sandbox is the real boundary.
 
-    Returns (guardrails_block | None, raw_permissions | None). The precise
-    allow/deny rules are NOT auto-enforced (no Omnigent handler does that) — they
-    are carried in the sidecar and flagged DEGRADED with a manual step.
+    Returns the raw permissions (or None). No Omnigent handler enforces arbitrary
+    allow/deny lists, so they are flagged DEGRADED with an opt-in guardrail hint
+    rather than silently approximated.
     """
     perms = settings.get("permissions")
     if not perms:
-        return None, None
-    guardrails: dict[str, Any] = {
-        "policies": {
-            "blast_radius": {
-                "type": "function",
-                "function": {"path": _BLAST_RADIUS_PATH},
-            }
-        }
-    }
+        return None
     ledger.record(
         "permissions",
         ".claude/settings.json",
         Status.DEGRADED,
-        "approximated with the blast_radius guardrail (a catastrophic-command DENY "
-        "set); your specific allow/deny rules are NOT auto-enforced",
-        "review the carried rules in MIGRATION_EXTENSIONS.yaml and translate them to "
-        "Omnigent policies if you need exact enforcement",
+        "carried verbatim; not auto-enforced (Omnigent agents run sandboxed, so the "
+        "sandbox is the safety boundary)",
+        "if you want an extra catastrophic-command net, add a blast_radius policy "
+        "(omnigent.inner.nessie.policies.blast_radius) to config.yaml under guardrails",
     )
-    return guardrails, perms
+    return perms
 ```
-- [ ] **Step 4:** `uv run pytest tests/test_claude_extras.py -q` → PASS (4 tests). Then `uv run pytest -q && uv run ruff check && uv run mypy omnigent_migrate` → clean.
-- [ ] **Step 5:** `git add -A && git commit -m "feat: permissions -> approximate blast_radius guardrail (DEGRADED)"`. **STOP.**
+- [ ] **Step 4:** `uv run pytest tests/test_claude_extras.py -q` → PASS (3 tests). Then `uv run pytest -q && uv run ruff check && uv run mypy omnigent_migrate` → clean.
+- [ ] **Step 5:** `git add -A && git commit -m "feat: carry Claude permissions (DEGRADED; sandbox is the boundary)"`. **STOP.**
 
 ---
 
@@ -316,7 +286,7 @@ def collect_permissions(
   - `collect_hooks(settings, ledger) -> dict[str, Any] | None` (records UNSUPPORTED).
   - `collect_commands(project, ledger) -> list[dict[str, Any]] | None` (records DEGRADED).
   - `collect_plugins(project, settings, ledger) -> dict[str, Any] | None` (records DEGRADED).
-  - `collect_claude_extras(project, config, ledger) -> dict[str, Any]` — coordinator: mutates `config` (adds `guardrails` when permissions present) and returns the `extensions` dict.
+  - `collect_claude_extras(project, ledger) -> dict[str, Any]` — coordinator returning the `extensions` dict (permissions/hooks/commands/plugins). Does NOT mutate config.
 
 - [ ] **Step 1: Failing test.** Append to `tests/test_claude_extras.py`:
 ```python
@@ -359,7 +329,7 @@ def test_collect_plugins_degraded(tmp_path: Path) -> None:
     assert any(e.primitive == "plugins" and e.status is Status.DEGRADED for e in led.entries)
 
 
-def test_coordinator_attaches_guardrail_and_returns_extensions(tmp_path: Path) -> None:
+def test_coordinator_returns_all_extensions(tmp_path: Path) -> None:
     cdir = tmp_path / ".claude"
     cdir.mkdir()
     (cdir / "settings.json").write_text(
@@ -367,9 +337,7 @@ def test_coordinator_attaches_guardrail_and_returns_extensions(tmp_path: Path) -
         '"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "x"}]}]}}'
     )
     led = Ledger()
-    config: dict[str, object] = {"name": "demo"}
-    ext = collect_claude_extras(tmp_path, config, led)
-    assert config["guardrails"]["policies"]["blast_radius"]["function"]["path"]  # attached
+    ext = collect_claude_extras(tmp_path, led)
     assert ext["permissions"]["deny"] == ["Bash(rm:*)"]
     assert "hooks" in ext
 ```
@@ -452,16 +420,11 @@ def collect_plugins(
     return info
 
 
-def collect_claude_extras(
-    project: Path, config: dict[str, Any], ledger: Ledger
-) -> dict[str, Any]:
-    """Parse settings/commands/plugins; mutate `config` with a guardrail when
-    permissions are present; return the MigrationExtensions sidecar dict."""
+def collect_claude_extras(project: Path, ledger: Ledger) -> dict[str, Any]:
+    """Parse settings/commands/plugins; return the MigrationExtensions sidecar dict."""
     settings = read_settings(project)
     extensions: dict[str, Any] = {}
-    guardrails, perms = collect_permissions(settings, ledger)
-    if guardrails is not None:
-        config["guardrails"] = guardrails
+    perms = collect_permissions(settings, ledger)
     if perms is not None:
         extensions["permissions"] = perms
     hooks = collect_hooks(settings, ledger)
@@ -475,7 +438,7 @@ def collect_claude_extras(
         extensions["plugins"] = plugins
     return extensions
 ```
-- [ ] **Step 4:** `uv run pytest tests/test_claude_extras.py -q` → PASS (8 tests). Then `uv run pytest -q && uv run ruff check && uv run mypy omnigent_migrate` → clean.
+- [ ] **Step 4:** `uv run pytest tests/test_claude_extras.py -q` → PASS (7 tests). Then `uv run pytest -q && uv run ruff check && uv run mypy omnigent_migrate` → clean.
 - [ ] **Step 5:** `git add -A && git commit -m "feat: hooks/commands/plugins collectors + extras coordinator"`. **STOP.**
 
 ---
@@ -488,7 +451,7 @@ def collect_claude_extras(
 - Modify: `tests/test_claude_importer.py`
 
 **Interfaces:**
-- Consumes: `collect_claude_extras` (Task 4); `Bundle(config, agents, extensions)` (Task 1).
+- Consumes: `collect_claude_extras(project, ledger)` (Task 4); `Bundle(config, agents, extensions)` (Task 1).
 
 - [ ] **Step 1: Enrich the fixture** (a Claude project that exercises all four primitives):
 ```bash
@@ -498,14 +461,14 @@ printf '{\n  "permissions": {"allow": ["Read", "Bash(git:*)"], "deny": ["Bash(rm
 printf -- '---\ndescription: Deploy the app\nallowed-tools: Bash, Read\n---\nRun the deploy checklist step by step.\n' > tests/fixtures/claude_project/.claude/commands/deploy.md
 printf '{"name": "demo-plugin", "version": "0.1.0"}\n' > tests/fixtures/claude_project/.claude-plugin/plugin.json
 ```
-- [ ] **Step 2: Failing test.** In `tests/test_claude_importer.py`, replace the scope-note assertion line (`assert any("Hooks" in n for n in led.notes)`) and extend `test_imports_core_primitives` with:
+- [ ] **Step 2: Failing test.** In `tests/test_claude_importer.py`, **replace** the scope-note assertion line (`assert any("Hooks" in n for n in led.notes)`) with these assertions inside `test_imports_core_primitives`:
 ```python
-    # Plan 2: deferred primitives now examined
-    assert bundle.config["guardrails"]["policies"]["blast_radius"]["function"]["path"]
+    # Plan 2: deferred primitives now examined + carried in extensions
     assert bundle.extensions["permissions"]["deny"] == ["Bash(rm:*)"]
     assert "hooks" in bundle.extensions
     assert bundle.extensions["commands"][0]["name"] == "deploy"
     assert bundle.extensions["plugins"]["enabledPlugins"] == {"superpowers@official": True}
+    assert "guardrails" not in bundle.config  # sandbox is the boundary; no auto-guardrail
     by_primitive = {e.primitive: e.status for e in led.entries}
     assert by_primitive["permissions"] is Status.DEGRADED
     assert by_primitive["hooks"] is Status.UNSUPPORTED
@@ -517,7 +480,7 @@ printf '{"name": "demo-plugin", "version": "0.1.0"}\n' > tests/fixtures/claude_p
   1. Add the import: `from omnigent_migrate.importers.claude_extras import collect_claude_extras`.
   2. **Replace** the existing scope-note block (the `ledger.note("This importer scanned ... NOT yet examined ...")` call added in Plan 1) with the extras call + an accurate note, immediately before `return Bundle(...)`:
 ```python
-        extensions = collect_claude_extras(project, config, ledger)
+        extensions = collect_claude_extras(project, ledger)
         ledger.note(
             "Scanned: memory, sub-agents, MCP, skills, permissions, hooks, "
             "slash-commands, plugins. Items not representable in the bundle are "
@@ -545,7 +508,7 @@ printf '{"name": "demo-plugin", "version": "0.1.0"}\n' > tests/fixtures/claude_p
 def test_enriched_fixture_full_fidelity(tmp_path: Path) -> None:
     led = Ledger()
     bundle = ClaudeCodeImporter().to_bundle(FIXTURE, led)
-    out = export(bundle, tmp_path / "b")  # raises if the guardrail/bundle is invalid
+    out = export(bundle, tmp_path / "b")  # raises ExportInvalid if the bundle is invalid
     # sidecar carries the un-mapped primitives
     sidecar = out / "MIGRATION_EXTENSIONS.yaml"
     assert sidecar.is_file()
@@ -562,7 +525,7 @@ def test_enriched_fixture_full_fidelity(tmp_path: Path) -> None:
     assert "## Translated" in report and "## Degraded" in report and "## Unsupported" in report
     assert "## Scope" in report
 ```
-- [ ] **Step 2:** `uv run pytest tests/test_integration_claude.py -q` → should PASS already (all parts built in Tasks 1–5). If `export` raises `ExportInvalid`, the emitted `guardrails` shape drifted from the verified minimal form — re-check against the "Verified facts" block, fix `collect_permissions`, re-run.
+- [ ] **Step 2:** `uv run pytest tests/test_integration_claude.py -q` → should PASS already (all parts built in Tasks 1–5). If `export` raises `ExportInvalid`, something in the emitted `config.yaml` drifted (note: this plan emits NO guardrail, so the config is the Plan 1 shape plus nothing) — read the error, fix the offending importer output, re-run.
 - [ ] **Step 3: Real-world smoke (best-effort).** Confirm the new coverage on a real project that has hooks + plugins + commands:
 ```bash
 cd /Users/bryanli/Projects/btli/omnigent-migrate
@@ -570,18 +533,18 @@ uv run omnigent-migrate from-claude /Users/bryanli/Projects/askcv.ai -o /tmp/ask
 cat /tmp/askcv-omnigent2/MIGRATION_REPORT.md
 ls /tmp/askcv-omnigent2/MIGRATION_EXTENSIONS.yaml
 ```
-Expected: a validated bundle; the report now shows `hooks` UNSUPPORTED, `slash_commands`/`plugins` DEGRADED (askcv has all three), and a sidecar exists. Record the report summary in the commit message.
+Expected: a validated bundle; the report now shows `hooks` UNSUPPORTED, `slash_commands`/`plugins`/`permissions` DEGRADED (askcv has all of these), and a sidecar exists. Record the report summary in the commit message.
 - [ ] **Step 4:** `git add -A && git commit -m "test: golden-report + sidecar fidelity on the enriched fixture"`. **STOP.**
 
 ---
 
 ## Self-Review
 
-**Spec coverage (§6 deferred rows):** permissions→guardrails DEGRADED → Task 3 ✓ · hooks→UNSUPPORTED+carry → Task 4 ✓ · slash-commands→DEGRADED+carry → Task 4 ✓ · plugins→DEGRADED+carry → Task 4 ✓ · `MigrationExtensions` sidecar (§5) → Task 1 ✓ · golden report (§12) → Task 6 ✓ · wired + fixture → Task 5 ✓. **Honesty fix:** the Plan 1 scope note ("NOT yet examined") is replaced with an accurate one (Task 5). **Deferred (not gaps):** deep plugin expansion (spec §16 follow-on), command→skill auto-generation (invasive; manual step instead), Codex importer (Plan 3), round-trip tests (Plan 3+).
+**Spec coverage (§6 deferred rows):** permissions carried DEGRADED (sandbox is the boundary) → Task 3 ✓ · hooks→UNSUPPORTED+carry → Task 4 ✓ · slash-commands→DEGRADED+carry → Task 4 ✓ · plugins→DEGRADED+carry → Task 4 ✓ · `MigrationExtensions` sidecar (§5) → Task 1 ✓ · golden report (§12) → Task 6 ✓ · wired + fixture → Task 5 ✓. **Honesty fix:** the Plan 1 scope note ("NOT yet examined") is replaced with an accurate one (Task 5). **Deferred (not gaps):** deep plugin expansion (spec §16 follow-on), command→skill auto-generation (invasive; manual step instead), the opt-in `blast_radius` guardrail (manual step, not emitted — sandbox is the boundary), Codex importer (Plan 3), round-trip tests (Plan 3+).
 
 **Placeholder scan:** none — every step has complete code/commands and expected output. Recovery cited in Task 6 Step 2.
 
-**Type consistency:** `read_settings(project)->dict`, `collect_permissions(settings,ledger)->(dict|None, Any)`, `collect_hooks(settings,ledger)->dict|None`, `collect_commands(project,ledger)->list[dict]|None`, `collect_plugins(project,settings,ledger)->dict|None`, `collect_claude_extras(project,config,ledger)->dict`, `Bundle(config,agents,extensions)`, `_write_yaml(path,data,header=...)`, `_util._frontmatter/_sanitize/_os_env` — used consistently across tasks. The emitted `guardrails` shape matches the spike-verified minimal form exactly.
+**Type consistency:** `read_settings(project)->dict`, `collect_permissions(settings,ledger)->Any`, `collect_hooks(settings,ledger)->dict|None`, `collect_commands(project,ledger)->list[dict]|None`, `collect_plugins(project,settings,ledger)->dict|None`, `collect_claude_extras(project,ledger)->dict`, `Bundle(config,agents,extensions)`, `_write_yaml(path,data,header=...)`, `_util._frontmatter/_sanitize/_os_env` — used consistently across tasks. The importer emits no Omnigent-internal handler path, so `config.yaml` stays the Plan 1 shape and keeps validating.
 
 ---
 
