@@ -23,8 +23,17 @@ def test_imports_core_primitives() -> None:
     statuses = {(e.primitive, e.status) for e in led.entries}
     assert ("skills", Status.TRANSLATED) in statuses
     assert ("subagent", Status.TRANSLATED) in statuses
-    # honest scope: the report discloses what was NOT examined
-    assert any("Hooks" in n for n in led.notes)
+    # Plan 2: deferred primitives now examined + carried in extensions
+    assert bundle.extensions["permissions"]["deny"] == ["Bash(rm:*)"]
+    assert "hooks" in bundle.extensions
+    assert bundle.extensions["commands"][0]["name"] == "deploy"
+    assert bundle.extensions["plugins"]["enabledPlugins"] == {"superpowers@official": True}
+    assert "guardrails" not in bundle.config  # sandbox is the boundary; no auto-guardrail
+    by_primitive = {e.primitive: e.status for e in led.entries}
+    assert by_primitive["permissions"] is Status.DEGRADED
+    assert by_primitive["hooks"] is Status.UNSUPPORTED
+    assert by_primitive["slash_commands"] is Status.DEGRADED
+    assert by_primitive["plugins"] is Status.DEGRADED
 
 
 def test_detect() -> None:

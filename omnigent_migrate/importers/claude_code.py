@@ -8,6 +8,7 @@ from typing import Any
 
 from omnigent_migrate.harness_map import resolve_harness
 from omnigent_migrate.importers._util import _frontmatter, _os_env, _sanitize
+from omnigent_migrate.importers.claude_extras import collect_claude_extras
 from omnigent_migrate.ir import Bundle
 from omnigent_migrate.ledger import Ledger, Status
 
@@ -108,9 +109,11 @@ class ClaudeCodeImporter:
         if tools:
             config["tools"] = tools
 
+        extensions = collect_claude_extras(project, ledger)
         ledger.note(
-            "This importer scanned memory, sub-agents, MCP servers, and skills. "
-            "Hooks, slash-commands, plugins, and permissions are NOT yet examined — "
-            "the counts above cover only the scanned primitives."
+            "Scanned: memory, sub-agents, MCP, skills, permissions, hooks, "
+            "slash-commands, plugins. Items not representable in the bundle are "
+            "recorded above (DEGRADED/UNSUPPORTED) and carried in "
+            "MIGRATION_EXTENSIONS.yaml — nothing was dropped."
         )
-        return Bundle(config=config, agents=agents)
+        return Bundle(config=config, agents=agents, extensions=extensions)

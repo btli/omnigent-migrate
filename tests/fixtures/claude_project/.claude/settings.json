@@ -1,0 +1,5 @@
+{
+  "permissions": {"allow": ["Read", "Bash(git:*)"], "deny": ["Bash(rm:*)"], "defaultMode": "acceptEdits"},
+  "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo guard", "timeout": 5}]}]},
+  "enabledPlugins": {"superpowers@official": true}
+}
