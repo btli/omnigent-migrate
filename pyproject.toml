@@ -1,0 +1,39 @@
+[project]
+name = "omnigent-migrate"
+version = "0.1.0"
+description = "Migrate agent setups from Claude Code / Codex to Omnigent"
+requires-python = ">=3.13"
+dependencies = [
+    "click>=8.1",
+    "omnigent",
+    "ruamel.yaml>=0.18",
+]
+
+[project.scripts]
+omnigent-migrate = "omnigent_migrate.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.3", "mypy>=1.13", "ruff>=0.8"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "omnigent.*"
+ignore_missing_imports = true
+
+[tool.uv.build-backend]
+module-name = "omnigent_migrate"
+module-root = ""
+
+[tool.uv.sources]
+omnigent = { path = "../omnigent", editable = true }
+
+[build-system]
+requires = ["uv_build>=0.5"]
+build-backend = "uv_build"
