@@ -25,19 +25,19 @@ def from_claude(project: Path, out: Path | None, dry_run: bool) -> None:
     """Import a Claude Code project into an Omnigent bundle."""
     ledger = Ledger()
     bundle = ClaudeCodeImporter().to_bundle(project, ledger)
-    out_dir = out or (project / ".omnigent")
+    report_md = ledger.render_markdown()
     if dry_run:
-        report = project / "MIGRATION_REPORT.md"
-        report.write_text(ledger.render_markdown())
-        click.echo(f"DRY RUN  {project.name} (no bundle written)")
+        # A dry run previews only — render the report to stdout, never mutate the source.
+        click.echo(f"DRY RUN  {project.name} (no files written)\n")
+        click.echo(report_md)
     else:
+        out_dir = out or (project / ".omnigent")
         export(bundle, out_dir)
-        report = out_dir / "MIGRATION_REPORT.md"
-        report.write_text(ledger.render_markdown())
+        (out_dir / "MIGRATION_REPORT.md").write_text(report_md)
         click.echo(f"OK  migrated {project.name} -> {out_dir}")
+        click.echo(f"  report: {out_dir / 'MIGRATION_REPORT.md'}")
     s = ledger.summary()
     click.echo(
         f"  {s[Status.TRANSLATED]} translated · {s[Status.DEGRADED]} degraded · "
         f"{s[Status.UNSUPPORTED]} unsupported"
     )
-    click.echo(f"  report: {report}")

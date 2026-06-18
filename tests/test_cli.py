@@ -21,4 +21,7 @@ def test_dry_run_writes_no_bundle(tmp_path: Path) -> None:
     res = CliRunner().invoke(main, ["from-claude", str(FIXTURE), "-o", str(out), "--dry-run"])
     assert res.exit_code == 0, res.output
     assert not (out / "config.yaml").exists()
+    # a dry run must not mutate the source project, and must render the report to stdout
+    assert not (FIXTURE / "MIGRATION_REPORT.md").exists()
     assert "DRY RUN" in res.output
+    assert "# Migration Report" in res.output
