@@ -38,3 +38,29 @@ def test_imports_core_primitives() -> None:
 
 def test_detect() -> None:
     assert ClaudeCodeImporter().detect(FIXTURE) is True
+
+
+# C1: malformed YAML in a sub-agent .md must not abort the whole import
+def test_malformed_subagent_frontmatter_does_not_abort(tmp_path: Path) -> None:
+    """A tab-broken frontmatter in a sub-agent file must yield a bundle, not raise."""
+    (tmp_path / ".claude").mkdir()
+    agents_dir = tmp_path / ".claude" / "agents"
+    agents_dir.mkdir()
+    # Tab inside YAML block triggers ruamel ScannerError
+    (agents_dir / "broken.md").write_text("---\n\tname: broken-agent\n---\nDo the thing.\n")
+    led = Ledger()
+    bundle = ClaudeCodeImporter().to_bundle(tmp_path, led)
+    # The sub-agent must still be present in the bundle using the filename stem as name
+    assert "broken" in bundle.agents
+
+
+# C1: non-dict (scalar) frontmatter in a sub-agent file must not abort the whole import
+def test_scalar_subagent_frontmatter_does_not_abort(tmp_path: Path) -> None:
+    """A scalar YAML frontmatter in a sub-agent file must yield a bundle, not raise."""
+    (tmp_path / ".claude").mkdir()
+    agents_dir = tmp_path / ".claude" / "agents"
+    agents_dir.mkdir()
+    (agents_dir / "scalar.md").write_text("---\njust a string\n---\nDo stuff.\n")
+    led = Ledger()
+    bundle = ClaudeCodeImporter().to_bundle(tmp_path, led)
+    assert "scalar" in bundle.agents

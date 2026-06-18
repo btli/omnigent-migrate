@@ -22,14 +22,14 @@ def read_settings(project: Path) -> dict[str, Any]:
             continue
         try:
             data = json.loads(p.read_text())
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             continue
         if isinstance(data, dict):
             merged.update(data)
     return merged
 
 
-def collect_permissions(settings: dict[str, Any], ledger: Ledger) -> Any:
+def collect_permissions(settings: dict[str, Any], ledger: Ledger) -> dict[str, Any] | None:
     """Carry Claude `permissions` verbatim; the sandbox is the real boundary.
 
     Returns the raw permissions (or None). No Omnigent handler enforces arbitrary
@@ -37,7 +37,7 @@ def collect_permissions(settings: dict[str, Any], ledger: Ledger) -> Any:
     rather than silently approximated.
     """
     perms = settings.get("permissions")
-    if not perms:
+    if not perms or not isinstance(perms, dict):
         return None
     ledger.record(
         "permissions",

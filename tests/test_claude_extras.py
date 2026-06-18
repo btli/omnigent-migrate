@@ -78,3 +78,53 @@ def test_coordinator_returns_all_extensions(tmp_path: Path) -> None:
     ext = collect_claude_extras(tmp_path, led)
     assert ext["permissions"]["deny"] == ["Bash(rm:*)"]
     assert "hooks" in ext
+
+
+# C1: _frontmatter with malformed YAML does not raise — command file survives
+def test_collect_commands_malformed_frontmatter_yaml(tmp_path: Path) -> None:
+    """Tab-indented YAML is malformed; the command must still be returned without raising."""
+    cdir = tmp_path / ".claude" / "commands"
+    cdir.mkdir(parents=True)
+    # Tab character inside a YAML block triggers ruamel ScannerError
+    (cdir / "bad.md").write_text("---\n\tdescription: oops\n---\nBody text.\n")
+    led = Ledger()
+    cmds = collect_commands(tmp_path, led)
+    # Must produce a result rather than raising
+    assert cmds is not None
+    assert cmds[0]["name"] == "bad"
+    # description falls back to empty string because frontmatter was unparseable
+    assert cmds[0]["description"] == ""
+    assert "Body text." in cmds[0]["body"]
+
+
+# C1: _frontmatter with scalar (non-dict) YAML does not raise — command file survives
+def test_collect_commands_scalar_frontmatter(tmp_path: Path) -> None:
+    """A YAML scalar between --- fences (truthy non-dict) must not cause AttributeError."""
+    cdir = tmp_path / ".claude" / "commands"
+    cdir.mkdir(parents=True)
+    (cdir / "scalar.md").write_text("---\njust a string\n---\nBody.\n")
+    led = Ledger()
+    cmds = collect_commands(tmp_path, led)
+    assert cmds is not None
+    assert cmds[0]["name"] == "scalar"
+    assert cmds[0]["description"] == ""
+
+
+# M1: read_settings skips settings.json with invalid UTF-8 bytes instead of raising
+def test_read_settings_invalid_utf8(tmp_path: Path) -> None:
+    """A settings file containing invalid UTF-8 bytes must be silently skipped."""
+    cdir = tmp_path / ".claude"
+    cdir.mkdir()
+    # Write raw bytes that are not valid UTF-8
+    (cdir / "settings.json").write_bytes(b"\xff\xfe{invalid}")
+    result = read_settings(tmp_path)
+    assert result == {}
+
+
+# M2: collect_permissions with non-dict 'permissions' value returns None
+def test_collect_permissions_non_dict_is_noop() -> None:
+    """A non-dict 'permissions' value (e.g. a list) must be treated as absent."""
+    led = Ledger()
+    result = collect_permissions({"permissions": ["allow-all"]}, led)
+    assert result is None
+    assert led.entries == []

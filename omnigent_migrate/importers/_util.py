@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
 
 _yaml = YAML(typ="safe")
 _NAME_RE = re.compile(r"[^a-zA-Z0-9_-]")
@@ -19,7 +20,12 @@ def _frontmatter(text: str) -> tuple[dict[str, Any], str]:
     if text.startswith("---"):
         parts = text.split("---", 2)
         if len(parts) == 3:
-            return (_yaml.load(parts[1]) or {}), parts[2].lstrip("\n")
+            try:
+                loaded = _yaml.load(parts[1])
+            except YAMLError:
+                loaded = None
+            fm = loaded if isinstance(loaded, dict) else {}
+            return fm, parts[2].lstrip("\n")
     return {}, text
 
 
