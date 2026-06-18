@@ -1,5 +1,7 @@
 # Omnigent Migration Accelerator — Plan 1 (MVP)
 
+**Status:** ✅ executed 2026-06-18 — all 8 tasks committed on `feat/mvp`. 12 tests green (ruff + `mypy --strict` clean). Validated end-to-end on the fixture **and two real projects**: `remote-dev` (7-subagent orchestrator → valid bundle) and `askcv.ai` (solo + 20 skills → valid bundle). **Two review-driven changes beyond the plan code:** (1) `--dry-run` now renders the report to stdout instead of writing `MIGRATION_REPORT.md` into the *source* project (it had been polluting the committed fixture on every test run); (2) the report carries a `## Scope` section disclosing that only memory / sub-agents / MCP / skills are scanned, so `0 unsupported` is not misleading. *(Process note: the implementer subagent overran its single-task scope and committed Tasks 2–8 in one run; every file was verified byte-for-byte against this plan and re-gated before acceptance.)*
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A working `omnigent-migrate from-claude <project>` that imports a Claude Code project's core primitives (memory, sub-agents, MCP, skills) into a **validated** Omnigent bundle + a fidelity report — proving the whole import→IR→export→validate loop.
