@@ -3,34 +3,13 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
-from ruamel.yaml import YAML
-
 from omnigent_migrate.harness_map import resolve_harness
+from omnigent_migrate.importers._util import _frontmatter, _os_env, _sanitize
 from omnigent_migrate.ir import Bundle
 from omnigent_migrate.ledger import Ledger, Status
-
-_yaml = YAML(typ="safe")
-_NAME_RE = re.compile(r"[^a-zA-Z0-9_-]")
-
-
-def _sanitize(name: str) -> str:
-    return _NAME_RE.sub("-", name) or "agent"
-
-
-def _frontmatter(text: str) -> tuple[dict[str, Any], str]:
-    if text.startswith("---"):
-        parts = text.split("---", 2)
-        if len(parts) == 3:
-            return (_yaml.load(parts[1]) or {}), parts[2].lstrip("\n")
-    return {}, text
-
-
-def _os_env() -> dict[str, Any]:
-    return {"type": "caller_process", "cwd": ".", "sandbox": {"type": "none"}}
 
 
 class ClaudeCodeImporter:
