@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from omnigent_migrate.harness_map import resolve_harness
-from omnigent_migrate.importers._util import _frontmatter, _os_env, _sanitize
+from omnigent_migrate.importers._util import _frontmatter, _os_env, _sanitize, mcp_tool_entry
 from omnigent_migrate.importers.claude_extras import collect_claude_extras
 from omnigent_migrate.ir import Bundle
 from omnigent_migrate.ledger import Ledger, Status
@@ -67,18 +67,7 @@ class ClaudeCodeImporter:
                 continue
             servers = data.get("mcpServers") or data.get("mcp_servers") or {}
             for sname, cfg in servers.items():
-                entry: dict[str, Any] = {"type": "mcp"}
-                if "command" in cfg:
-                    entry["command"] = cfg["command"]
-                    if cfg.get("args"):
-                        entry["args"] = cfg["args"]
-                    if cfg.get("env"):
-                        entry["env"] = cfg["env"]
-                elif "url" in cfg:
-                    entry["url"] = cfg["url"]
-                    if cfg.get("headers"):
-                        entry["headers"] = cfg["headers"]
-                mcp_tools[_sanitize(sname)] = entry
+                mcp_tools[_sanitize(sname)] = mcp_tool_entry(cfg)
                 ledger.record("mcp_server", f"{mcp_file}:{sname}", Status.TRANSLATED)
 
         skills_dir = project / ".claude" / "skills"
