@@ -24,6 +24,11 @@ class LedgerEntry:
 @dataclass
 class Ledger:
     entries: list[LedgerEntry] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+    def note(self, message: str) -> None:
+        """Record a scope caveat (rendered under '## Scope'); qualifies the counts."""
+        self.notes.append(message)
 
     def record(
         self,
@@ -62,5 +67,9 @@ class Ledger:
                 lines.append(line)
                 if e.manual_step:
                     lines.append(f"  - Manual: {e.manual_step}")
+            lines.append("")
+        if self.notes:
+            lines.append("## Scope")
+            lines.extend(f"- {n}" for n in self.notes)
             lines.append("")
         return "\n".join(lines)

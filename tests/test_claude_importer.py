@@ -23,6 +23,8 @@ def test_imports_core_primitives() -> None:
     statuses = {(e.primitive, e.status) for e in led.entries}
     assert ("skills", Status.TRANSLATED) in statuses
     assert ("subagent", Status.TRANSLATED) in statuses
+    # honest scope: the report discloses what was NOT examined
+    assert any("Hooks" in n for n in led.notes)
 
 
 def test_detect() -> None:

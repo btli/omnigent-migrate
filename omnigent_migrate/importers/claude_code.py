@@ -128,4 +128,10 @@ class ClaudeCodeImporter:
             tools["agents"] = sorted(agents)
         if tools:
             config["tools"] = tools
+
+        ledger.note(
+            "This importer scanned memory, sub-agents, MCP servers, and skills. "
+            "Hooks, slash-commands, plugins, and permissions are NOT yet examined — "
+            "the counts above cover only the scanned primitives."
+        )
         return Bundle(config=config, agents=agents)
