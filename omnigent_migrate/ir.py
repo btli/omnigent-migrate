@@ -12,3 +12,4 @@ class Bundle:
 
     config: dict[str, Any]
     agents: dict[str, dict[str, Any]] = field(default_factory=dict)
+    extensions: dict[str, Any] = field(default_factory=dict)

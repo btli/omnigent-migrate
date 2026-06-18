@@ -40,3 +40,17 @@ def test_export_invalid_raises(tmp_path: Path) -> None:
     bad = Bundle(config={"spec_version": 1, "executor": {"type": "omnigent", "config": {"harness": "nope"}}})
     with pytest.raises(ExportInvalid):
         export(bad, tmp_path / "bundle")
+
+
+def test_export_writes_extensions_sidecar(tmp_path: Path) -> None:
+    b = _solo()
+    b.extensions["hooks"] = {"PreToolUse": [{"matcher": "Bash"}]}
+    out = export(b, tmp_path / "bundle")
+    sidecar = out / "MIGRATION_EXTENSIONS.yaml"
+    assert sidecar.is_file()
+    assert sidecar.read_text().startswith("# Carried from the source project")
+
+
+def test_export_no_extensions_no_sidecar(tmp_path: Path) -> None:
+    out = export(_solo(), tmp_path / "bundle")
+    assert not (out / "MIGRATION_EXTENSIONS.yaml").exists()
