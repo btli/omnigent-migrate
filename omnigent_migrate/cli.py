@@ -81,3 +81,33 @@ def auto(project: Path, out: Path | None, dry_run: bool) -> None:
         click.echo("detected: codex")
         bundle = CodexImporter().to_bundle(project, ledger)
     _emit(project, bundle, ledger, out, dry_run)
+
+
+@main.command(name="distill")
+@click.argument("project", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("-o", "--out", type=click.Path(file_okay=False, path_type=Path), default=None)
+@click.option("--plan", "plan_path", type=click.Path(path_type=Path), default=None,
+              help="Plan file (default: <project>/DISTILL_PLAN.yaml).")
+@click.option("--apply", "do_apply", is_flag=True, help="Emit the bundle from the reviewed plan.")
+@click.option("--no-llm", is_flag=True, help="Use the deterministic RuleSelector (no API call).")
+@click.option("--model", default="claude-opus-4-8")
+def distill(project: Path, out: Path | None, plan_path: Path | None, do_apply: bool,
+            no_llm: bool, model: str) -> None:
+    """Distill a project's stack into an Omnigent agent-team bundle."""
+    from omnigent_migrate.distill.distill import apply as apply_plan
+    from omnigent_migrate.distill.distill import propose, write_plan
+    from omnigent_migrate.distill.selector.anthropic import AnthropicSelector
+    from omnigent_migrate.distill.selector.base import RuleSelector
+
+    plan_file = plan_path or (project / "DISTILL_PLAN.yaml")
+    if do_apply:
+        out_dir = out or (project / ".omnigent")
+        apply_plan(project, plan_file, out_dir, Ledger())
+        click.echo(f"OK  distilled {project.name} -> {out_dir}")
+        return
+    selector = RuleSelector() if no_llm else AnthropicSelector(model=model)
+    team = propose(project, selector)
+    write_plan(team, plan_file)
+    click.echo(f"PROPOSED  {project.name}: orchestrator + {len(team.workers)} workers + reviewer "
+               f"+ {len(team.specialists)} specialists ({', '.join(s.archetype for s in team.specialists)})")
+    click.echo(f"  plan: {plan_file}  (review/edit, then --apply)")
