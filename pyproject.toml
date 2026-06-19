@@ -4,8 +4,10 @@ version = "0.1.0"
 description = "Migrate agent setups from Claude Code / Codex to Omnigent"
 requires-python = ">=3.13"
 dependencies = [
+    "anthropic>=0.111.0",
     "click>=8.1",
     "omnigent",
+    "pydantic>=2.13.4",
     "ruamel.yaml>=0.18",
 ]
 
