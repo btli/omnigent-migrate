@@ -1,0 +1,5 @@
+{
+  "name": "demo",
+  "dependencies": {"next": "15", "react": "19", "drizzle-orm": "0.3"},
+  "devDependencies": {"vitest": "2", "@playwright/test": "1"}
+}
