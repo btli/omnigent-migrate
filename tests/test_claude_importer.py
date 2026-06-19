@@ -9,8 +9,15 @@ FIXTURE = Path(__file__).parent / "fixtures" / "claude_project"
 def test_imports_core_primitives() -> None:
     led = Ledger()
     bundle = ClaudeCodeImporter().to_bundle(FIXTURE, led)
-    # memory -> prompt
-    assert "lead for the demo app" in bundle.config["prompt"]
+    prompt = bundle.config["prompt"]
+    # prompt is a PERSONA, not the CLAUDE.md content (fixture has a sub-agent -> orchestrator)
+    assert "orchestrator for the claude_project repository" in prompt
+    assert "- reviewer: Reviews diffs" in prompt
+    assert "CLAUDE.md" in prompt  # pointer, not content
+    assert "lead for the demo app" not in prompt  # CLAUDE.md content must NOT be inlined
+    # memory recorded translated-in-place (left in repo, harness auto-loads it)
+    mem = next(e for e in led.entries if e.primitive == "memory")
+    assert mem.status is Status.TRANSLATED and "left in place" in mem.note
     # subagent -> agents/ + tools.agents + spawn (orchestrator shape)
     assert "reviewer" in bundle.agents
     assert bundle.agents["reviewer"]["executor"]["config"]["harness"] == "claude-sdk"  # sonnet -> claude-sdk

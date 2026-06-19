@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from omnigent_migrate.harness_map import resolve_harness
-from omnigent_migrate.importers._util import _frontmatter, _os_env, _sanitize, mcp_tool_entry
+from omnigent_migrate.importers._util import _frontmatter, _os_env, _sanitize, build_persona, mcp_tool_entry
 from omnigent_migrate.importers.claude_extras import collect_claude_extras
 from omnigent_migrate.ir import Bundle
 from omnigent_migrate.ledger import Ledger, Status
@@ -23,15 +23,12 @@ class ClaudeCodeImporter:
         project = project.expanduser().resolve()
         name = _sanitize(project.name)
 
-        prompt = ""
-        for mem in ("CLAUDE.md", "AGENTS.md"):
-            p = project / mem
-            if p.is_file():
-                prompt += p.read_text() + "\n"
-                ledger.record("memory", mem, Status.TRANSLATED)
-        if not prompt:
-            prompt = "You are a coding agent for this repository. Follow its conventions.\n"
-            ledger.record("memory", "(none)", Status.DEGRADED, "no CLAUDE.md/AGENTS.md; used a default")
+        memory_files = [m for m in ("CLAUDE.md", "AGENTS.md") if (project / m).is_file()]
+        for m in memory_files:
+            ledger.record(
+                "memory", m, Status.TRANSLATED,
+                "left in place; the harness auto-loads it at cwd=project",
+            )
 
         agents: dict[str, dict[str, Any]] = {}
         agents_dir = project / ".claude" / "agents"
@@ -77,10 +74,12 @@ class ClaudeCodeImporter:
                 mcp_tools[_sanitize(sname)] = entry
                 ledger.record("mcp_server", f"{mcp_file}:{sname}", Status.TRANSLATED)
 
+        skills_present = False
         skills_dir = project / ".claude" / "skills"
         if skills_dir.is_dir():
             n = sum(1 for d in skills_dir.iterdir() if (d / "SKILL.md").is_file())
             if n:
+                skills_present = bool(n)
                 ledger.record(
                     "skills",
                     f".claude/skills/ ({n})",
@@ -88,6 +87,12 @@ class ClaudeCodeImporter:
                     "left in place; Omnigent host-discovers them at cwd=project",
                 )
 
+        prompt = build_persona(
+            project.name,
+            memory_files,
+            skills_present,
+            [(a, agents[a]["description"]) for a in sorted(agents)],
+        )
         config: dict[str, Any] = {
             "spec_version": 1,
             "name": name,
