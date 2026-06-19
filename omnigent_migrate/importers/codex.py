@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from omnigent_migrate.harness_map import resolve_harness
-from omnigent_migrate.importers._util import _os_env, _sanitize, mcp_tool_entry
+from omnigent_migrate.importers._util import _os_env, _sanitize, build_persona, mcp_tool_entry
 from omnigent_migrate.ir import Bundle
 from omnigent_migrate.ledger import Ledger, Status
 
@@ -51,21 +51,12 @@ class CodexImporter:
         project = project.expanduser().resolve()
         name = _sanitize(project.name)
 
-        prompt = ""
-        for mem in ("AGENTS.md", "CLAUDE.md"):
-            p = project / mem
-            if not p.is_file():
-                continue
-            try:
-                text = p.read_text()
-            except (OSError, UnicodeDecodeError):
-                ledger.record("memory", mem, Status.UNSUPPORTED, "unreadable")
-                continue
-            prompt += text + "\n"
-            ledger.record("memory", mem, Status.TRANSLATED)
-        if not prompt:
-            prompt = "You are a coding agent for this repository. Follow its conventions.\n"
-            ledger.record("memory", "(none)", Status.DEGRADED, "no AGENTS.md/CLAUDE.md; used a default")
+        memory_files = [m for m in ("AGENTS.md", "CLAUDE.md") if (project / m).is_file()]
+        for m in memory_files:
+            ledger.record(
+                "memory", m, Status.TRANSLATED,
+                "left in place; the harness auto-loads it at cwd=project",
+            )
 
         cfg_path = (config_path or _DEFAULT_CONFIG).expanduser()
         toml = _read_toml(cfg_path, ledger)
@@ -126,7 +117,7 @@ class CodexImporter:
             "name": name,
             "description": f"Migrated from Codex: {project.name}",
             "executor": executor,
-            "prompt": prompt,
+            "prompt": build_persona(project.name, memory_files, False, []),
             "async": True,
             "cancellable": True,
             "os_env": _os_env(),

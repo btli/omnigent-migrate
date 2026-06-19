@@ -15,8 +15,13 @@ def test_imports_codex_setup() -> None:
     led = Ledger()
     bundle = CodexImporter().to_bundle(FIXTURE, led, config_path=CONFIG)
     cfg = bundle.config
-    # AGENTS.md -> prompt
-    assert "lead for the demo Codex app" in cfg["prompt"]
+    # AGENTS.md -> persona prompt (not inlined)
+    prompt = cfg["prompt"]
+    assert "coding agent working in the codex_project repository" in prompt
+    assert "AGENTS.md" in prompt  # pointer
+    assert "lead for the demo Codex app" not in prompt  # content not inlined
+    mem = next(e for e in led.entries if e.primitive == "memory")
+    assert mem.status is Status.TRANSLATED and "left in place" in mem.note
     # model -> executor.model (top-level) + harness via resolve_harness
     assert cfg["executor"]["model"] == "gpt-5.5"
     assert cfg["executor"]["config"]["harness"] == "codex"
@@ -42,5 +47,5 @@ def test_missing_config_is_lenient(tmp_path: Path) -> None:
     (tmp_path / "AGENTS.md").write_text("Be a good agent.\n")
     led = Ledger()
     bundle = CodexImporter().to_bundle(tmp_path, led, config_path=tmp_path / "nope.toml")
-    assert "good agent" in bundle.config["prompt"]
+    assert "coding agent working in the" in bundle.config["prompt"]
     assert bundle.config["executor"]["config"]["harness"] == "codex"  # default codex harness
