@@ -44,7 +44,6 @@ class AnthropicSelector:
             resp = client.messages.create(
                 model=self._model,
                 max_tokens=4096,
-                temperature=0,
                 system=_RUBRIC,
                 tools=[tool],
                 tool_choice={"type": "tool", "name": "emit_team"},

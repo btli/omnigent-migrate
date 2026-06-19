@@ -21,8 +21,10 @@ class _StubClient:
     def __init__(self, data: dict[str, Any]) -> None:
         self._data = data
         self.messages = self
+        self.kwargs: dict[str, Any] = {}
 
-    def create(self, **_: Any) -> _Resp:
+    def create(self, **kw: Any) -> _Resp:
+        self.kwargs = kw
         return _Resp(self._data)
 
 
@@ -49,3 +51,12 @@ def test_anthropic_selector_falls_back_on_error() -> None:
     sel = AnthropicSelector(client=_Boom())
     team = sel.propose(ProjectProfile(name="demo", db=["drizzle"]), LIBRARY)  # RuleSelector path
     assert {s.archetype for s in team.specialists} == {"db-migrations"}
+
+
+def test_anthropic_selector_omits_temperature() -> None:
+    # claude-opus-4-8 rejects `temperature` with a 400 (a live smoke caught this — the
+    # request 400'd and silently fell back to RuleSelector). The selector must not pass it.
+    stub = _StubClient(_canned())
+    AnthropicSelector(client=stub).propose(ProjectProfile(name="demo"), LIBRARY)
+    assert "temperature" not in stub.kwargs
+    assert stub.kwargs["tool_choice"] == {"type": "tool", "name": "emit_team"}
