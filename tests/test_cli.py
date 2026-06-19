@@ -62,3 +62,17 @@ def test_distill_apply_emits_bundle(tmp_path: Path) -> None:
                                     "--plan", str(plan), "-o", str(tmp_path / "b")])
     assert res.exit_code == 0, res.output
     assert (tmp_path / "b" / "config.yaml").is_file()
+
+
+def test_distill_apply_bad_plan_clean_error(tmp_path: Path) -> None:
+    # A malformed plan must produce a clean ClickException error (exit_code != 0, no raw
+    # ValidationError exception propagating out — only a SystemExit from click).
+    bad_plan = tmp_path / "bad.yaml"
+    bad_plan.write_text("not: a valid team\n")
+    res = CliRunner().invoke(main, ["distill", str(DISTILL_FIXTURE), "--apply",
+                                    "--plan", str(bad_plan), "-o", str(tmp_path / "b")])
+    assert res.exit_code != 0
+    # After the fix, click swallows the exception as a ClickException (SystemExit(1))
+    # rather than a raw pydantic ValidationError escaping the command.
+    from pydantic import ValidationError
+    assert not isinstance(res.exception, ValidationError)

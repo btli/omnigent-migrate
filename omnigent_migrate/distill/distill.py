@@ -60,9 +60,15 @@ def apply(project: Path, plan_path: Path, out: Path, ledger: Ledger) -> Path:
     team = read_plan(plan_path)
     agents: dict[str, dict[str, Any]] = {}
     for w in [*team.workers, team.reviewer]:
-        agents[_sanitize(w.name)] = _agent_config(_sanitize(w.name), w.persona, w.harness, w.model)
+        key = _sanitize(w.name)
+        if key in agents:
+            raise ValueError(f"duplicate agent name {key!r} in the distill plan")
+        agents[key] = _agent_config(key, w.persona, w.harness, w.model)
     for s in team.specialists:
-        agents[_sanitize(s.name)] = _agent_config(_sanitize(s.name), s.persona, s.harness, s.model)
+        key = _sanitize(s.name)
+        if key in agents:
+            raise ValueError(f"duplicate agent name {key!r} in the distill plan")
+        agents[key] = _agent_config(key, s.persona, s.harness, s.model)
 
     extensions = collect_claude_extras(project, ledger)  # port permissions/hooks/commands/plugins
     config: dict[str, Any] = {

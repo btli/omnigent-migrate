@@ -101,8 +101,14 @@ def distill(project: Path, out: Path | None, plan_path: Path | None, do_apply: b
 
     plan_file = plan_path or (project / "DISTILL_PLAN.yaml")
     if do_apply:
+        from omnigent_migrate.exporter import ExportInvalid
+        from pydantic import ValidationError
+
         out_dir = out or (project / ".omnigent")
-        apply_plan(project, plan_file, out_dir, Ledger())
+        try:
+            apply_plan(project, plan_file, out_dir, Ledger())
+        except (ValidationError, FileNotFoundError, ExportInvalid) as exc:
+            raise click.ClickException(f"could not apply plan {plan_file}: {exc}") from exc
         click.echo(f"OK  distilled {project.name} -> {out_dir}")
         return
     selector = RuleSelector() if no_llm else AnthropicSelector(model=model)
